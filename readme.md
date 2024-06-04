@@ -3,15 +3,15 @@
 This program illustrates and tests for the
 [DVSorder vulnerability](https://DVSorder.org).
 
-Given a Dominion CVR file (in CSV or zipped-JSON format), it attempts
-to unshuffle each batch of ballots. It reports which batches are
-vulnerable and outputs an estimate of the number of vulnerable ballots
-in the file.
+Given a Dominion CVR file (in CSV or zipped-JSON format) or ballot
+image zip file, it attempts to unshuffle each batch of ballots. It
+reports which batches are vulnerable and outputs an estimate of the
+number of vulnerable ballots in the file.
 
 Sample output:
 
 ```
-$ ./DVSorder.py testdata/v5-05-12-01_mi-wayne.zip
+$ ./DVSorder.py --cvrs testdata/v5-05-12-01_mi-wayne.zip
 description: Wayne County 2020 November Election, version: 5.5.12.1
 1057 of 1738 tabulators are vulnerable models
 ...

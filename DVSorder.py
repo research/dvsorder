@@ -7,6 +7,7 @@ each batch of ballots. It outputs an estimate of the number of
 vulnerable ballots in the file.
 
 """
+import os
 import sys
 import csv
 import json
@@ -48,7 +49,7 @@ def unshuffle(record_ids, scanner_model=None):
     assert isinstance(record_ids, list)
     assert len(record_ids) == len(set(record_ids))
     if len(record_ids) == 0:
-        return []
+        return [], []
     ids = [r % 1000000 for r in record_ids]
 
     def reduce_indices(indices):
@@ -127,9 +128,18 @@ def read_csv_batches(input_filename):
 
     print(f'event_name: {header_event[0]!r}, rtr_version: {header_event[1]!r}')
 
-    tab_n = header_ballot.index('TabulatorNum')
-    bat_n = header_ballot.index('BatchId')
-    rec_n = header_ballot.index('RecordId')
+    if "Tabulator" in header_ballot:
+        tab_n = header_ballot.index('Tabulator')
+    else:
+        tab_n = header_ballot.index('TabulatorNum')
+    if "Tabulator" in header_ballot:
+        bat_n = header_ballot.index('Batch')
+    else:
+        bat_n = header_ballot.index('BatchId')
+    if "Record" in header_ballot:
+        rec_n = header_ballot.index('Record')
+    else:
+        rec_n = header_ballot.index('RecordId')
     assert tab_n == 1 and bat_n == 2 and rec_n == 3
 
     batches = {}
@@ -161,6 +171,8 @@ def read_json_zip_batches(input_filename):
     }
     n_vulnerable_tabs = len([k for k,m in tab_models.items()
         if m in ['ImagecastPrecinct', 'ImagecastEvolution']])
+    print([m for k,m in tab_models.items()
+        if m in ['ImagecastPrecinct', 'ImagecastEvolution']])
     print(f'{n_vulnerable_tabs} of {len(tab_manifest["List"])} tabulators are vulnerable models')
 
     members = source_zip.namelist()
@@ -173,25 +185,67 @@ def read_json_zip_batches(input_filename):
                 tab_id, bat_id, rec_id, model = cvr['TabulatorId'], cvr['BatchId'], cvr['RecordId'], tab_models[cvr['TabulatorId']]
                 if (tab_id, bat_id, model) not in batches:
                     batches[(tab_id, bat_id, model)] = []
+                if rec_id == 'X':
+                    print('skipping sanitized record', file=sys.stderr)
+                    continue
                 batches[(tab_id, bat_id, model)] += [rec_id]
         yield batches
 
-def process_file(filename, show_unshuffled=False):
+def read_image_zip_batches(input_filename):
     """
-    Processes ballots from a specified JSON or CSV CVR file.
+    Generator that yields batches from a zipfile containing ballot images.
+
+    Parameters:
+    input_filename(string): Zip archive containing TIF ballot images.
+
+    Yields a dict containing lists of record_ids for one or more batches.
+    """
+    with zipfile.ZipFile(input_filename) as zf:
+        names = zf.namelist()
+
+    batches = {}
+    for name in names:
+        base, ext = os.path.splitext(os.path.basename(name))
+        if ext == ".tif":
+            ids = base.split("_")
+            try:
+                tab_id, bat_id, rec_id = int(ids[0]), int(ids[1]), int(ids[2])
+            except:
+                print("skipping", name, file=sys.stderr)
+                continue
+            if (tab_id, bat_id, None) not in batches:
+                batches[(tab_id, bat_id, None)] = []
+            batches[(tab_id, bat_id, None)] += [rec_id]
+
+    yield batches
+
+def multi_file_reader(filenames, use_images):
+    for filename in filenames:
+        batch_reader = None
+        if filename.endswith(".csv"):
+            if use_images:
+                raise Exception("Can't read images from a CSV file")
+            batch_reader = read_csv_batches
+        elif filename.endswith(".zip"):
+            if use_images:
+                batch_reader = read_image_zip_batches
+            else:
+                batch_reader = read_json_zip_batches
+        else:
+            raise Exception("Doesn't look like a .csv or .zip file")
+        for result in batch_reader(filename):
+            yield result
+
+def process_files(filenames, use_images=False, show_unshuffled=True):
+    """
+    Processes ballots from a specified file.
 
     If show_unshuffled is True, prints the unshuffled record_ids
     from each vulnerable batch.
     """
-    if filename.endswith(".csv"):
-        batch_reader = read_csv_batches(filename)
-    elif filename.endswith(".zip"):
-        batch_reader = read_json_zip_batches(filename)
-    else:
-        raise Exception("Doesn't look like a .csv or .zip file")
     count_ballots = 0
     count_vulnerable = 0
-    for batch_dict in batch_reader:
+    for batch_dict in multi_file_reader(filenames, use_images):
         for (tab_id, bat_id, model), batch in batch_dict.items():
             count_ballots += len(batch)
             try:
@@ -201,12 +255,15 @@ def process_file(filename, show_unshuffled=False):
                 continue
             print(f"tabulator {tab_id} batch {bat_id} appears vulnerable ({len(batch)} ballots, missing {fit})")
             if show_unshuffled:
-                print(results)
+                print("unshuffled ballots:",results)
             count_vulnerable += len(batch)
     print(f"approximately {count_vulnerable} of {count_ballots} ballots ({int(100*count_vulnerable/count_ballots)}%) appear to be vulnerable")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} CSV_FILE|JSON_ZIP_FILE")
+    if len(sys.argv) >= 3 and sys.argv[1] == "--cvrs":
+        process_files(sys.argv[2:], use_images=False)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--images":
+        process_files(sys.argv[2:], use_images=True)
+    else:
+        print(f"Usage: {sys.argv[0]} --images|cvrs FILE [FILE ...]")
         sys.exit(1)
-    process_file(sys.argv[1])
