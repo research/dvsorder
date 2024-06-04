@@ -8,6 +8,7 @@ vulnerable ballots in the file.
 
 """
 import os
+import ntpath
 import sys
 import csv
 import json
@@ -182,7 +183,12 @@ def read_json_zip_batches(input_filename):
         if name.startswith('CvrExport') and name.endswith('.json'):
             obj = json.loads(source_zip.read(name))
             for cvr in obj['Sessions']:
-                tab_id, bat_id, rec_id, model = cvr['TabulatorId'], cvr['BatchId'], cvr['RecordId'], tab_models[cvr['TabulatorId']]
+                tab_id, bat_id, rec_id, model = cvr['TabulatorId'], cvr['BatchId'], cvr.get('RecordId','X'), tab_models[cvr['TabulatorId']]
+                if rec_id == 'X' and 'ImageMask' in cvr:
+                    name = ntpath.basename(cvr['ImageMask'])
+                    if name.endswith('*.*'):
+                        name=name[:-3]
+                    rec_id = int(name.split("_")[2])
                 if (tab_id, bat_id, model) not in batches:
                     batches[(tab_id, bat_id, model)] = []
                 if rec_id == 'X':
@@ -236,7 +242,7 @@ def multi_file_reader(filenames, use_images):
         for result in batch_reader(filename):
             yield result
 
-def process_files(filenames, use_images=False, show_unshuffled=True):
+def process_files(filenames, use_images=False, show_unshuffled=False):
     """
     Processes ballots from a specified file.
 
